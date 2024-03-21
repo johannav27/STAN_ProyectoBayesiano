@@ -1,0 +1,132 @@
+---
+title: "Proyecto_Resultados_Partidos_Futbol"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+---
+
+# Cargar packages 
+
+```{r }
+library(dplyr)
+library(ggplot2)
+library(rstan)
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+rstan_options(threads_per_chain = 1)
+```
+
+# Cargar datos
+```{r }
+data <- read.csv(file = 'match_data.csv')
+data %>% tail(10)
+```
+
+```{r }
+# Datos que nos importan
+data <- data %>%
+  select(season,del_position,del_defense,del_offense,del_winning,home_win) %>%
+  na.omit()
+```
+
+```{r }
+# Limitarnos a temporada previo 2019
+train_data <- data %>% filter(season < 2019)
+test_data <- data %>% filter(season == 2019)
+```
+
+
+
+```{r }
+# Compilar modelo
+model <- stan_model('model.stan')
+```
+
+
+```{r }
+# Preparar datos para stan
+data_for_stan <- list()
+data_for_stan$N <- nrow(train_data)
+data_for_stan$C <- ncol(train_data) -2
+data_for_stan$X_train <- train_data %>% select(-season,-home_win) %>% as.matrix()
+data_for_stan$match_outcome <- train_data$home_win
+data_for_stan$N_test <- nrow(test_data)
+data_for_stan$X_test <- test_data %>% select(-season,-home_win) %>% as.matrix()
+```
+
+```{r }
+# Muestrear de la posterior
+samples <- sampling(object = model,
+                    data = data_for_stan,
+                    chains = 4,
+                    iter = 2000,
+                    seed = 1234)
+
+```
+
+
+
+```{r }
+#Resultados
+results_jpt <- extract(samples,par = c('intercept','coeffs')) %>% as.data.frame()
+results_jpt
+```
+
+```{r }
+results_summary <- summary(samples,par = c('intercept','coeffs'))$summary %>% as.data.frame()
+results_summary
+```
+
+# Divergencias
+
+```{r }
+get_sampler_params(samples,inc_warmup = FALSE)[[1]][,'divergent__'] %>% sum()
+get_sampler_params(samples,inc_warmup = FALSE)[[2]][,'divergent__'] %>% sum()
+```
+# Gráfica por pares
+```{r }
+pairs(samples,pars = c('intercept','coeffs'))
+```
+
+# + Resultados
+
+```{r }
+# Intercept
+extract(samples,pars = 'intercept') %>%
+  as.data.frame() %>%
+  ggplot() +
+  geom_histogram(aes(x = intercept),fill = 'transparent',color = 'black') + 
+  xlab('Intercept valor') + 
+  ylab('Frecuencia')
+
+```
+
+```{r }
+# Intervalos de credibilidad coeficientes
+summary(samples,pars = 'coeffs')$summary %>%
+  as.data.frame() %>%
+  mutate(term = data %>% select(-home_win,-season) %>% names()) %>%
+  ggplot() + 
+  geom_segment(aes(x = `2.5%`,xend=`97.5%`,y = reorder(term,mean),yend = reorder(term,mean)))+
+  geom_point(aes(x = mean, y = reorder(term,mean), color = 'red'))+
+  geom_vline(aes(xintercept = 0),linetype = 'dashed')+
+  xlab('Tamaño efecto')+
+  ylab('')
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
